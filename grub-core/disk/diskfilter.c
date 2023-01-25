@@ -139,6 +139,12 @@ scan_disk_partition_iter (grub_disk_t disk, grub_partition_t p, void *data)
   grub_util_info ("Scanning for DISKFILTER devices on disk %s", name);
 #endif
 
+  if (p->parent == NULL || p->parent->len == 0)
+    {
+      grub_dprintf ("diskfilter", "skipping %s due to unknown parent partition length", name);
+      return 0;
+    }
+
   disk->partition = p;
   
   for (arr = array_list; arr != NULL; arr = arr->next)
