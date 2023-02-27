@@ -50,6 +50,10 @@
 #define  GRUB_PCI_REG_BIST         0x0f
 #define  GRUB_PCI_REG_ADDRESSES    0x10
 
+#define  GRUB_PCI_HEADER_TYPE_NORMAL  0
+#define  GRUB_PCI_HEADER_TYPE_BRIDGE  1
+#define  GRUB_PCI_HEADER_TYPE_CARDBUS 2
+
 /* Beware that 64-bit address takes 2 registers.  */
 #define  GRUB_PCI_REG_ADDRESS_REG0 0x10
 #define  GRUB_PCI_REG_ADDRESS_REG1 0x14

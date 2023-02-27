@@ -2527,3 +2527,15 @@ module = {
   common = commands/i386/wrmsr.c;
   enable = x86;
 };
+module = {
+  name = pcinet;
+  common = pcinet/pcinet.c;
+};
+module = {
+  name = nfp6000;
+  common = pcinet/netronome/nfp6000.c;
+  common = pcinet/netronome/nfp_mip.c;
+  common = pcinet/netronome/nfp_rtsym.c;
+  common = pcinet/netronome/nfp_resource.c;
+  common = pcinet/netronome/nfp_nffw.c;
+};
