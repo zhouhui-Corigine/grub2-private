@@ -16,10 +16,12 @@
  *  along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef GRUB_PCINET_PCINET_HEADER
-#define GRUB_PCINET_PCINET_HEADER 1
+#ifndef GRUB_PCINET_HEADER
+#define GRUB_PCINET_HEADER 1
 
 #include <grub/pci.h>
+#include <grub/net.h>
+#include <grub/fs.h>
 
 struct grub_pcinet_card
 {
@@ -29,9 +31,23 @@ struct grub_pcinet_card
   grub_uint16_t device;
   const char *name;
   grub_err_t (*init) (grub_pci_device_t dev);
+  grub_err_t (*open) (struct grub_file *file, const char* name, grub_uint64_t timeout_ms);
 };
 
+typedef struct grub_pcinet
+{
+  char *name;
+  struct grub_pcinet_card* dev;
+  grub_net_packets_t packs;
+  grub_off_t offset;
+  grub_fs_t fs;
+  int eof;
+  int stall;
+} *grub_pcinet_t;
+
+extern grub_pcinet_t (*EXPORT_VAR(grub_pcinet_open)) (const char *name);
 extern struct grub_pcinet_card *grub_pcinet_cards;
+
 static inline void
 grub_pcinet_card_register (struct grub_pcinet_card *card)
 {
@@ -43,6 +59,9 @@ static inline void grub_pcinet_card_unregister (struct grub_pcinet_card *card)
 {
   grub_list_remove (GRUB_AS_LIST (card));
 }
+
+grub_err_t grub_pcinet_fs_open(struct grub_file *file, const char *file_name);
+grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_name, grub_uint64_t timeout_ms);
 
 #define FOR_PCINET_CARDS(var) for (var = grub_pcinet_cards; var; var = var->next)
 #endif

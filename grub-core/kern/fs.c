@@ -19,6 +19,7 @@
 
 #include <grub/disk.h>
 #include <grub/net.h>
+#include <grub/pcinet.h>
 #include <grub/fs.h>
 #include <grub/file.h>
 #include <grub/err.h>
@@ -116,6 +117,8 @@ grub_fs_probe (grub_device_t device)
     }
   else if (device->net && device->net->fs)
     return device->net->fs;
+	else if (device->pcinet && device->pcinet->fs)
+		return device->pcinet->fs;
 
   grub_error (GRUB_ERR_UNKNOWN_FS, N_("unknown filesystem"));
   return 0;

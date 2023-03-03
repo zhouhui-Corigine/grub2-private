@@ -2538,4 +2538,6 @@ module = {
   common = pcinet/netronome/nfp_rtsym.c;
   common = pcinet/netronome/nfp_resource.c;
   common = pcinet/netronome/nfp_nffw.c;
+  common = pcinet/netronome/nfp_os_file.c;
+  common = pcinet/netronome/nfp_pipe.c;
 };

@@ -17,24 +17,75 @@
  */
 #include <grub/pci.h>
 #include <grub/err.h>
+#include <grub/mm.h>
 #include <grub/net.h>
 #include <grub/dl.h>
-#include <grub/pcinet/pcinet.h>
+#include <grub/pcinet.h>
 #include <grub/command.h>
+#include <grub/file.h>
+#include <grub/list.h>
+#include <grub/kernel.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
 struct grub_pcinet_card *grub_pcinet_cards = NULL;
 
-grub_net_t (*grub_pcinet_open) (const char *name) = NULL;
+static grub_err_t
+grub_pcinet_fs_dir (grub_device_t device, const char *path __attribute__ ((unused)),
+		 grub_fs_dir_hook_t hook __attribute__ ((unused)),
+		 void *hook_data __attribute__ ((unused)))
+{
+  if (!device->net)
+    return grub_error (GRUB_ERR_BUG, "invalid net device");
+  return GRUB_ERR_NONE;
+}
+
+grub_err_t grub_pcinet_fs_open (struct grub_file *file, const char *name)
+{
+  grub_err_t err;
+
+  file->device->pcinet->packs.first = NULL;
+  file->device->pcinet->packs.last = NULL;
+  file->device->pcinet->name = grub_strdup(name);
+  if (!file->device->pcinet->name){
+      return grub_errno;
+  }
+
+  if (!file->device->pcinet->dev->open)
+    return GRUB_ERR_BAD_DEVICE;
+
+  err = file->device->pcinet->dev->open(file, name, 5000);
+  if(err) {
+    while (file->device->pcinet->packs.first)
+	  {
+	    grub_netbuff_free (file->device->pcinet->packs.first->nb);
+	    grub_net_remove_packet (file->device->pcinet->packs.first);
+	  }
+    grub_free (file->device->pcinet->name);
+    return err;
+  }
+
+  return GRUB_ERR_NONE;
+}
 
 
-static grub_err_t pci_dev_init(grub_pci_device_t dev)
+static struct grub_fs grub_pcinet_fs =
+  {
+    .name = "pcinet",
+    .fs_dir = grub_pcinet_fs_dir,
+    .fs_open = grub_pcinet_fs_open,
+    .fs_read = NULL,
+    .fs_close = NULL,
+    .fs_label = NULL,
+    .fs_uuid = NULL,
+    .fs_mtime = NULL,
+  };
+
+static struct grub_pcinet_card* pci_dev_get_and_init(grub_pci_device_t dev)
 {
   grub_uint8_t header_type;
   grub_uint16_t vendor, device;
   struct grub_pcinet_card* pcicard;
-
   grub_pci_address_t addr;
 
   addr = grub_pci_make_address(dev, GRUB_PCI_REG_HEADER_TYPE);
@@ -42,7 +93,7 @@ static grub_err_t pci_dev_init(grub_pci_device_t dev)
 
   if (header_type == GRUB_PCI_HEADER_TYPE_CARDBUS) {
     grub_dprintf("pcinet", "CardBus doesn't support BARs\n");
-    return GRUB_ERR_BAD_DEVICE;
+    return NULL;
   }
   addr = grub_pci_make_address(dev, GRUB_PCI_REG_VENDOR);
   vendor = grub_pci_read_word(addr);
@@ -54,16 +105,18 @@ static grub_err_t pci_dev_init(grub_pci_device_t dev)
     if (pcicard->vendor != vendor || pcicard->device != device)
       continue;
     pcicard->init(dev);
+    break;
   }
 
-  return GRUB_ERR_NONE;
+  return pcicard;
 }
 
-static grub_net_t
-grub_pcinet_open_real (const char *name)
+static grub_pcinet_t grub_pcinet_open_real (const char *name)
 {
-  const char *bus, *device, *function;
+  grub_pcinet_t ret;
   grub_pci_device_t dev;
+  struct grub_pcinet_card* pcinet_card;
+  const char *bus, *device, *function;
 
   if (grub_strncmp (name, "pci:", sizeof ("pci:") - 1) == 0)
   {
@@ -81,7 +134,6 @@ grub_pcinet_open_real (const char *name)
       grub_error (GRUB_ERR_BAD_DEVICE, N_("pci device format is wrong"));
       return NULL;
     }
-
     dev.function = grub_strtol(function + 1, NULL, 10);
   }
   else
@@ -89,19 +141,23 @@ grub_pcinet_open_real (const char *name)
     grub_error (GRUB_ERR_BAD_DEVICE, N_("no pci device is specified"));
     return NULL;
   }
-  pci_dev_init(dev);
+  pcinet_card = pci_dev_get_and_init(dev);
+  if(!pcinet_card)
+    return NULL;
+  ret = grub_zalloc (sizeof (*ret));
+  if (!ret)
+    return NULL;
+  ret->dev = pcinet_card;
+  ret->fs = &grub_pcinet_fs;
 
-  return NULL;
+  return ret;
 }
 
 static grub_err_t
 grub_pcinet_test (struct grub_command *cmd __attribute__ ((unused)),
-		  int argc, char **args)
+		  int argc __attribute__ ((unused)), char **args)
 {
-  if (argc < 1)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT,
-		       N_("two arguments expected"));
-  grub_pcinet_open_real(args[1]);
+  grub_file_open(args[0], GRUB_FILE_TYPE_LINUX_KERNEL);
 
   return GRUB_ERR_NONE;
 

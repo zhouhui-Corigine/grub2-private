@@ -25,11 +25,13 @@
 
 struct grub_disk;
 struct grub_net;
+struct grub_pcinet; 
 
 struct grub_device
 {
   struct grub_disk *disk;
   struct grub_net *net;
+  struct grub_pcinet* pcinet;
 };
 typedef struct grub_device *grub_device_t;
 

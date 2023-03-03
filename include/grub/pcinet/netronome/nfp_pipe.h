@@ -7,22 +7,73 @@
 #ifndef GRUB_PCINET_NFP_PIPE_HEADER
 #define GRUB_PCINET_NFP_PIPE_HEADER 1
 
-/* This header should not use nfp-drv-user.git/include headers
- * to make it portabale to the uboot build environment.
- */
+#include <grub/pcinet/netronome/nfp_cpp.h>
 
-/* Enable for debug visibility */
-#define DEBUG_PIPE (0u)
-
-#if DEBUG_PIPE
-#define DEBUG_PRINT(...) printf(__VA_ARGS__)
-#else
-#define DEBUG_PRINT(...)
-#endif
+/* These are the required symbols for os update to work */
+#define OS_FILE_BUFFER "os_file_buffer"
+#define OS_FILE_CONTROL "os_file_control"
 
 /* The minimum buffer size is derived from the maximum flash sector size */
 #define PIPE_MINIMUM_BUFFER_SIZE (4096u)
 #define PIPE_OPERATION_INVALID (0u)
+
+/* If the symbols are not available in the firmware */
+#define OS_FILE_DEFAULT_CONTROL_ADDR (0x2000000u)
+#define OS_FILE_DEFAULT_CONTROL_SIZE (0x400u)
+#define OS_FILE_DEFAULT_BUFFER_ADDR  (0x3000000u)
+#define OS_FILE_DEFAULT_BUFFER_SIZE  (0x10000u)
+#define OS_FILE_DEFAULT_DOMAIN (24u)
+#define OS_FILE_DEFAULT_TARGET (7u)
+
+#define OS_FILE_PATH_MAX_LENGTH (256u)
+
+#define PIPE_POLLING_DELAY_MS (10u)
+/*
+ * Meta structs go into the control block and can only be written
+ * by the master. The data structs/types go into the buffer block
+ * and may be written by either the master, or the worker.
+ *
+ * Typically, for raw block transfers from the master to the worker
+ * no type is declared here as the user will simply use a pointer
+ * to the block. In the same way, in the case where the master
+ * request a single transaction request from the worker, no meta
+ * block is needed, and only the structure used for interpreting the
+ * reply in the buffer.
+ */
+
+#define PIPE_OPERATION_FILE_NAME (0x1u)
+struct pipe_operation_file_name_meta {
+	char file_path[OS_FILE_PATH_MAX_LENGTH];
+};
+
+#define PIPE_OPERATION_FILE_WRITE (0x2u)
+struct pipe_operation_file_write_meta {
+	grub_uint64_t write_size;
+	grub_uint32_t transaction_size;
+	grub_uint32_t transaction_count;
+	grub_uint32_t transaction_total;
+};
+
+#define PIPE_OPERATION_FILE_READ  (0x3u)
+struct pipe_operation_file_read_meta {
+	grub_uint64_t read_size;
+	grub_uint32_t transaction_size;
+	grub_uint32_t transaction_count;
+	grub_uint32_t transaction_total;
+};
+
+#define PIPE_OPERATION_FILE_INFO  (0x4u)
+struct pipe_operation_file_info_data {
+	grub_uint32_t file_valid;
+	grub_uint64_t file_size;
+};
+
+#define PIPE_OPERATION_FILE_ERASE  (0x5u)
+struct pipe_operation_file_erase_data {
+	grub_uint32_t file_valid;
+};
+
+#define OS_FILE_OPERATION_MAX_META_SIZE (OS_FILE_PATH_MAX_LENGTH)
 
 /*
  * The lower 8 bits of the 32-bit unsigned operation word is the operation opcode, while the upper
@@ -33,10 +84,10 @@
 #define PIPE_OPERATION_BUILD(x, y) (PIPE_OPERATION_MASK(x) | PIPE_OPERATION_CUSTOM_MASK(y))
 
 #define SZ_CEIL64_TYPE(x) \
-			(((sizeof(x) + sizeof(uint64_t) - 1)) & ~(sizeof(uint64_t) - 1))
+			(((sizeof(x) + sizeof(grub_uint64_t) - 1)) & ~(sizeof(grub_uint64_t) - 1))
 
 #define SZ_CEIL64_VAL(x) \
-			((((x) + sizeof(uint64_t) - 1)) & ~(sizeof(uint64_t) - 1))
+			((((x) + sizeof(grub_uint64_t) - 1)) & ~(sizeof(grub_uint64_t) - 1))
 
 struct nfp_pipe_worker;
 struct nfp_pipe_master;
@@ -66,9 +117,9 @@ enum nfp_pipe_option_hash {
 };
 
 struct nfp_pipe_cpp_buffer {
-	uint32_t cppid;
-	uint64_t addr;
-	uint64_t size;
+	grub_uint32_t cppid;
+	grub_uint64_t addr;
+	grub_uint64_t size;
 	const char *name;
 };
 
@@ -76,10 +127,10 @@ struct nfp_pipe {
 	enum nfp_pipe_endpoint type;
 	struct nfp_pipe_cpp_buffer os_buffer;
 	struct nfp_pipe_cpp_buffer os_control;
-	uint8_t *nfp_pipe_buffer;
+	grub_uint8_t *nfp_pipe_buffer;
 	struct nfp_pipe_worker *worker_control;
 	struct nfp_pipe_master *master_control;
-	uint8_t *shared_control;
+	grub_uint8_t *shared_control;
 	struct nfp_cpp *cpp;
 };
 
@@ -95,9 +146,9 @@ struct nfp_pipe {
  *
  * @return 0 on success
  */
-int nfp_pipe_init(struct nfp_pipe *pipe, struct nfp_cpp *cpp, enum nfp_pipe_endpoint type,
-		  const struct nfp_pipe_cpp_buffer *os_update_buffer,
-		  const struct nfp_pipe_cpp_buffer *os_update_control, int meta_size);
+grub_err_t nfp_pipe_init(struct nfp_pipe *pipe, struct nfp_cpp *cpp, enum nfp_pipe_endpoint type,
+			const struct nfp_pipe_cpp_buffer *os_update_buffer,
+			const struct nfp_pipe_cpp_buffer *os_update_control, grub_int32_t meta_size);
 
 /**
  * Free the pipe endpoint.
@@ -106,7 +157,7 @@ int nfp_pipe_init(struct nfp_pipe *pipe, struct nfp_cpp *cpp, enum nfp_pipe_endp
  *
  * @return 0 on success
  */
-int nfp_pipe_exit(struct nfp_pipe *pipe);
+grub_err_t nfp_pipe_exit(struct nfp_pipe *pipe);
 
 /**
  * Perform a read of the control block from NFP memory
@@ -115,7 +166,7 @@ int nfp_pipe_exit(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_control_read(struct nfp_pipe *pipe);
+grub_err_t nfp_pipe_control_read(struct nfp_pipe *pipe);
 
 /**
  * Perform a write of the control block into NFP memory
@@ -124,7 +175,7 @@ int nfp_pipe_control_read(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_control_write(struct nfp_pipe *pipe);
+grub_err_t nfp_pipe_control_write(struct nfp_pipe *pipe);
 
 /**
  * Perform a read of the data buffer from NFP memory
@@ -134,7 +185,7 @@ int nfp_pipe_control_write(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_buffer_read(struct nfp_pipe *pipe, int bytes_written);
+grub_err_t nfp_pipe_buffer_read(struct nfp_pipe *pipe, grub_int32_t bytes_written);
 
 /**
  * Perform a write of the data buffer into NFP memory
@@ -144,7 +195,7 @@ int nfp_pipe_buffer_read(struct nfp_pipe *pipe, int bytes_written);
  *
  * @return 0 on success
  */
-int nfp_pipe_buffer_write(struct nfp_pipe *pipe, int bytes_read);
+grub_err_t nfp_pipe_buffer_write(struct nfp_pipe *pipe, grub_int32_t bytes_read);
 
 /**
  * Worker status get
@@ -162,7 +213,7 @@ enum nfp_pipe_status nfp_pipe_worker_status_get(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_worker_status_set(struct nfp_pipe *pipe, enum nfp_pipe_status status);
+grub_err_t nfp_pipe_worker_status_set(struct nfp_pipe *pipe, enum nfp_pipe_status status);
 
 /**
  * Master status get
@@ -180,7 +231,7 @@ enum nfp_pipe_status nfp_pipe_master_status_get(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_master_status_set(struct nfp_pipe *pipe, enum nfp_pipe_status status);
+grub_err_t nfp_pipe_master_status_set(struct nfp_pipe *pipe, enum nfp_pipe_status status);
 
 /**
  * Worker transaction status get
@@ -198,7 +249,7 @@ enum nfp_pipe_transaction_status nfp_pipe_worker_transaction_status_get(struct n
  *
  * @return 0 on success
  */
-int nfp_pipe_worker_transaction_status_set(struct nfp_pipe *pipe, enum nfp_pipe_transaction_status status);
+grub_err_t nfp_pipe_worker_transaction_status_set(struct nfp_pipe *pipe, enum nfp_pipe_transaction_status status);
 
 /**
  * Master transaction status get
@@ -216,7 +267,7 @@ enum nfp_pipe_transaction_status nfp_pipe_master_transaction_status_get(struct n
  *
  * @return 0 on success
  */
-int nfp_pipe_master_transaction_status_set(struct nfp_pipe *pipe, enum nfp_pipe_transaction_status status);
+grub_err_t nfp_pipe_master_transaction_status_set(struct nfp_pipe *pipe, enum nfp_pipe_transaction_status status);
 
 /**
  * Master operation get
@@ -224,7 +275,7 @@ int nfp_pipe_master_transaction_status_set(struct nfp_pipe *pipe, enum nfp_pipe_
  * @param pipe			Handle
  * @return			Operation
  */
-uint32_t nfp_pipe_operation_get(struct nfp_pipe *pipe);
+grub_uint32_t nfp_pipe_operation_get(struct nfp_pipe *pipe);
 
 /**
  * Master operation set
@@ -235,7 +286,7 @@ uint32_t nfp_pipe_operation_get(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_operation_set(struct nfp_pipe *pipe, uint32_t operation, enum nfp_pipe_endpoint meta_owner);
+grub_err_t nfp_pipe_operation_set(struct nfp_pipe *pipe, grub_uint32_t operation, enum nfp_pipe_endpoint meta_owner);
 
 /**
  * Master option hash get
@@ -243,7 +294,7 @@ int nfp_pipe_operation_set(struct nfp_pipe *pipe, uint32_t operation, enum nfp_p
  * @param pipe			Handle
  * @return			Hash Enabled
  */
-uint32_t nfp_pipe_option_hash_get(struct nfp_pipe *pipe);
+grub_uint32_t nfp_pipe_option_hash_get(struct nfp_pipe *pipe);
 
 /**
  * Master option hash set
@@ -253,7 +304,7 @@ uint32_t nfp_pipe_option_hash_get(struct nfp_pipe *pipe);
  *
  * @return 0 on success
  */
-int nfp_pipe_option_hash_set(struct nfp_pipe *pipe, uint32_t hash);
+grub_err_t nfp_pipe_option_hash_set(struct nfp_pipe *pipe, grub_uint32_t hash);
 
 /**
  * Get a pointer to the meta mirror
@@ -277,7 +328,7 @@ void *nfp_pipe_operation_buffer(struct nfp_pipe *pipe);
  * @param pipe			Handle
  * @return 0 on success
  */
-int nfp_pipe_control_debug(struct nfp_pipe *pipe);
+grub_err_t nfp_pipe_control_debug(struct nfp_pipe *pipe);
 
 #endif /* NFP_PIPE_H */
 
