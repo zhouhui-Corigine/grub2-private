@@ -7,6 +7,7 @@
 #ifndef GRUB_PCINET_NFP_PIPE_HEADER
 #define GRUB_PCINET_NFP_PIPE_HEADER 1
 
+#include <grub/file.h>
 #include <grub/pcinet/netronome/nfp_cpp.h>
 
 /* These are the required symbols for os update to work */
@@ -21,7 +22,7 @@
 #define OS_FILE_DEFAULT_CONTROL_ADDR (0x2000000u)
 #define OS_FILE_DEFAULT_CONTROL_SIZE (0x400u)
 #define OS_FILE_DEFAULT_BUFFER_ADDR  (0x3000000u)
-#define OS_FILE_DEFAULT_BUFFER_SIZE  (0x10000u)
+#define OS_FILE_DEFAULT_BUFFER_SIZE  (0x400000u)
 #define OS_FILE_DEFAULT_DOMAIN (24u)
 #define OS_FILE_DEFAULT_TARGET (7u)
 
@@ -329,6 +330,10 @@ void *nfp_pipe_operation_buffer(struct nfp_pipe *pipe);
  * @return 0 on success
  */
 grub_err_t nfp_pipe_control_debug(struct nfp_pipe *pipe);
+
+grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_name, grub_uint64_t timeout_ms);
+grub_err_t grub_pcinet_card_fs_read(struct grub_file *file);
+grub_err_t grub_pcinet_card_fs_close(struct grub_file *file);
 
 #endif /* NFP_PIPE_H */
 
