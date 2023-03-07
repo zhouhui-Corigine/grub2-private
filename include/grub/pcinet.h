@@ -27,11 +27,14 @@ struct grub_pcinet_card
 {
   struct grub_pcinet_card *next;
   struct grub_pcinet_card **prev;
+  grub_uint32_t inited;
   grub_uint16_t vendor;
   grub_uint16_t device;
   const char *name;
   grub_err_t (*init) (grub_pci_device_t dev);
   grub_err_t (*open) (struct grub_file *file, const char* name, grub_uint64_t timeout_ms);
+  grub_err_t (*read) (struct grub_file *file);
+  grub_err_t (*close) (struct grub_file *file);
 };
 
 typedef struct grub_pcinet
@@ -61,7 +64,6 @@ static inline void grub_pcinet_card_unregister (struct grub_pcinet_card *card)
 }
 
 grub_err_t grub_pcinet_fs_open(struct grub_file *file, const char *file_name);
-grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_name, grub_uint64_t timeout_ms);
 
 #define FOR_PCINET_CARDS(var) for (var = grub_pcinet_cards; var; var = var->next)
 #endif

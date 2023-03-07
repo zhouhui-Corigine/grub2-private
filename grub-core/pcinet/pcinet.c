@@ -25,6 +25,7 @@
 #include <grub/file.h>
 #include <grub/list.h>
 #include <grub/kernel.h>
+#include <grub/pcinet/netronome/nfp_pipe.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -35,7 +36,7 @@ grub_pcinet_fs_dir (grub_device_t device, const char *path __attribute__ ((unuse
 		 grub_fs_dir_hook_t hook __attribute__ ((unused)),
 		 void *hook_data __attribute__ ((unused)))
 {
-  if (!device->net)
+  if (!device->pcinet)
     return grub_error (GRUB_ERR_BUG, "invalid net device");
   return GRUB_ERR_NONE;
 }
@@ -46,6 +47,9 @@ grub_err_t grub_pcinet_fs_open (struct grub_file *file, const char *name)
 
   file->device->pcinet->packs.first = NULL;
   file->device->pcinet->packs.last = NULL;
+  file->device->pcinet->offset = 0;
+  file->device->pcinet->eof = 0;
+  file->device->pcinet->stall = 0;
   file->device->pcinet->name = grub_strdup(name);
   if (!file->device->pcinet->name){
       return grub_errno;
@@ -62,20 +66,148 @@ grub_err_t grub_pcinet_fs_open (struct grub_file *file, const char *name)
 	    grub_net_remove_packet (file->device->pcinet->packs.first);
 	  }
     grub_free (file->device->pcinet->name);
+    grub_error (GRUB_ERR_FILE_NOT_FOUND, "pcinet cannot find the file.");
     return err;
   }
 
   return GRUB_ERR_NONE;
 }
 
+static grub_err_t
+grub_pcinet_fs_close (grub_file_t file)
+{
+  if (file->device->pcinet->dev->close)
+    file->device->pcinet->dev->close(file);
+
+  while (file->device->pcinet->packs.first)
+    {
+      grub_netbuff_free (file->device->pcinet->packs.first->nb);
+      grub_net_remove_packet (file->device->pcinet->packs.first);
+    }
+  grub_free (file->device->pcinet->name);
+  return GRUB_ERR_NONE;
+}
+
+/*  Read from the packets list*/
+static grub_ssize_t
+grub_pcinet_fs_read_real (grub_file_t file, char *buf, grub_size_t len)
+{
+  grub_pcinet_t net = file->device->pcinet;
+  struct grub_net_buff *nb;
+  char *ptr = buf;
+  grub_size_t amount, total = 0;
+
+  while (net->packs.first)
+	{
+	  nb = net->packs.first->nb;
+	  amount = nb->tail - nb->data;
+	  if (amount > len)
+	    amount = len;
+	  len -= amount;
+	  total += amount;
+	  file->device->pcinet->offset += amount;
+	  if (grub_file_progress_hook)
+	    grub_file_progress_hook (0, 0, amount, file);
+	  if (buf)
+	    {
+	      grub_memcpy (ptr, nb->data, amount);
+	      ptr += amount;
+	    }
+	  if (amount == (grub_size_t) (nb->tail - nb->data))
+	  {
+      grub_netbuff_free (nb);
+	    grub_net_remove_packet (net->packs.first);
+	  }
+	  else
+	    nb->data += amount;
+
+    if(!file->device->pcinet->eof && net->dev->read)
+      net->dev->read(file);
+
+	  if (!len)
+    {
+       return total;
+    }
+	}
+	return total;
+}
+
+static grub_off_t
+have_ahead (struct grub_file *file)
+{
+  grub_pcinet_t net = file->device->pcinet;
+  grub_off_t ret = net->offset;
+  struct grub_net_packet *pack;
+  for (pack = net->packs.first; pack; pack = pack->next)
+    ret += pack->nb->tail - pack->nb->data;
+  return ret;
+}
+
+static grub_err_t
+grub_pcinet_seek_real (struct grub_file *file, grub_off_t offset)
+{
+  grub_err_t err;
+
+  if (offset == file->device->pcinet->offset)
+    return GRUB_ERR_NONE;
+
+  if (offset > file->device->pcinet->offset)
+  {
+    if (have_ahead(file) < offset)
+      return GRUB_ERR_BUG;
+	  grub_pcinet_fs_read_real (file, NULL, offset - file->device->pcinet->offset);
+    return grub_errno;
+  }
+  else
+  {
+    if (offset < OS_FILE_DEFAULT_BUFFER_SIZE)
+      file->device->pcinet->packs.first->nb->data = file->device->pcinet->packs.first->nb->head;
+    else {
+      const char *file_name;
+
+      while (file->device->pcinet->packs.first)
+      {
+        grub_netbuff_free (file->device->pcinet->packs.first->nb);
+        grub_net_remove_packet (file->device->pcinet->packs.first);
+      }
+      file->device->pcinet->dev->close(file);
+      file->device->pcinet->packs.first = NULL;
+      file->device->pcinet->packs.last = NULL;
+      file->device->pcinet->eof = 0;
+      file_name = (file->name[0] == '(') ? grub_strchr (file->name, ')') : NULL;
+      if (file_name)
+        file_name++;
+      err = file->device->pcinet->dev->open(file, file_name, 15000);
+      if (err)
+        return err;
+    }
+    file->device->pcinet->offset = 0;
+    grub_pcinet_fs_read_real (file, NULL, offset);
+    return grub_errno;
+  }
+}
+
+static grub_ssize_t
+grub_pcinet_fs_read (grub_file_t file, char *buf, grub_size_t len)
+{
+  if (file->offset != file->device->pcinet->offset)
+  {
+    grub_err_t err;
+    err = grub_pcinet_seek_real (file, file->offset);
+    if (err)
+	    return err;
+  }
+
+  return grub_pcinet_fs_read_real (file, buf, len);
+}
 
 static struct grub_fs grub_pcinet_fs =
   {
     .name = "pcinet",
     .fs_dir = grub_pcinet_fs_dir,
     .fs_open = grub_pcinet_fs_open,
-    .fs_read = NULL,
-    .fs_close = NULL,
+    .fs_read = grub_pcinet_fs_read,
+    .fs_close = grub_pcinet_fs_close,
     .fs_label = NULL,
     .fs_uuid = NULL,
     .fs_mtime = NULL,
@@ -104,7 +236,12 @@ static struct grub_pcinet_card* pci_dev_get_and_init(grub_pci_device_t dev)
   {
     if (pcicard->vendor != vendor || pcicard->device != device)
       continue;
-    pcicard->init(dev);
+
+    if (!pcicard->inited && pcicard->init)
+    {
+      pcicard->init(dev);
+      pcicard->inited = 1;
+    }
     break;
   }
 
@@ -153,22 +290,8 @@ static grub_pcinet_t grub_pcinet_open_real (const char *name)
   return ret;
 }
 
-static grub_err_t
-grub_pcinet_test (struct grub_command *cmd __attribute__ ((unused)),
-		  int argc __attribute__ ((unused)), char **args)
-{
-  grub_file_open(args[0], GRUB_FILE_TYPE_LINUX_KERNEL);
-
-  return GRUB_ERR_NONE;
-
-}
-
-static grub_command_t cmd_pcinet_test;
 GRUB_MOD_INIT(pcinet)
 {
-  cmd_pcinet_test = grub_register_command ("pcinet_test", grub_pcinet_test,
-					N_("SHORTNAME PCIDEV"),
-					N_("Test the pcidev."));
   grub_pcinet_open = grub_pcinet_open_real;
 }
 

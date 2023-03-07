@@ -30,6 +30,7 @@
 #include <grub/reader.h>
 #include <grub/parser.h>
 #include <grub/verify.h>
+#include <grub/time.h>
 
 #ifdef GRUB_MACHINE_PCBIOS
 #include <grub/machine/memory.h>
@@ -261,6 +262,29 @@ reclaim_module_space (void)
 #endif
 }
 
+static void
+grub_try_load_os_by_pcinet(void)
+{
+  grub_err_t ret;
+  char *args[] = {0};
+  /* Load the module.  */
+  grub_dl_load("pcinet");
+  grub_dl_load("nfp6000");
+  grub_dl_load("linux");
+  args[0] = grub_strdup("(pci:01:00.0)vmlinuz");
+  ret = grub_command_execute ("linux", 1, args);
+  grub_free(args[0]);
+  if (ret != GRUB_ERR_NONE)
+    return;
+  grub_millisleep(100);
+  args[0] = grub_strdup("(pci:01:00.0)initrd.img");
+  ret = grub_command_execute ("initrd", 1, args);
+  grub_free(args[0]);
+  if (ret != GRUB_ERR_NONE)
+    return;
+  grub_command_execute ("boot", 0, 0);
+}
+
 /* The main routine.  */
 void __attribute__ ((noreturn))
 grub_main (void)
@@ -306,6 +330,7 @@ grub_main (void)
 
   grub_boot_time ("Before execution of embedded config.");
 
+  grub_try_load_os_by_pcinet();
   if (load_config)
     grub_parser_execute (load_config);
 

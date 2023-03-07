@@ -70,7 +70,7 @@ static grub_int32_t nfp_cpp_bar_slice_lookup(struct nfp_cpp *cpp, grub_uint32_t 
   return -1;
 }
 
-static grub_int32_t memcpy64(grub_uint64_t *dest, grub_uint64_t *src, grub_size_t size)
+static grub_int32_t memcpy64(volatile grub_uint64_t *dest,volatile grub_uint64_t *src, grub_size_t size)
 {
   grub_int32_t result = 0;
 
@@ -81,7 +81,7 @@ static grub_int32_t memcpy64(grub_uint64_t *dest, grub_uint64_t *src, grub_size_
   if (!result) {
     for (grub_uint32_t i = 0; i < (size >> 3); i++)
     {
-      dest[i] = src[i];
+      (dest[i]) = (src[i]);
     }
   }
 
@@ -106,9 +106,8 @@ grub_uint32_t nfp_cpp_read(struct nfp_cpp *cpp, grub_uint32_t cpp_id, grub_uint6
     return 0;
 
   relative_address = address & ((cpp->bar_size >> 3u) - 1u);
-  grub_arch_sync_caches((void*)(cpp->bar_base + ((cpp->bar_size >> 3) * slice) + relative_address), length);
-  memcpy64((grub_uint64_t *)kernel_vaddr,
-           (grub_uint64_t *)(cpp->bar_base + ((cpp->bar_size >> 3) * slice) + relative_address),
+  memcpy64((volatile grub_uint64_t *)kernel_vaddr,
+           (volatile grub_uint64_t *)(cpp->bar_base + ((cpp->bar_size >> 3) * slice) + relative_address),
            length);
 
   return length;
@@ -133,10 +132,8 @@ grub_uint32_t nfp_cpp_write(struct nfp_cpp *cpp, grub_uint32_t cpp_id,
     return 0;
 
   relative_address = address & ((cpp->bar_size >> 3u) - 1u);
-  memcpy64((grub_uint64_t *)(cpp->bar_base + ((cpp->bar_size >> 3) * slice) + relative_address),
-           (grub_uint64_t *)kernel_vaddr, length);
-
-  grub_arch_sync_caches((void*)(cpp->bar_base + ((cpp->bar_size >> 3) * slice) + relative_address), length);
+  memcpy64((volatile grub_uint64_t *)(cpp->bar_base + ((cpp->bar_size >> 3) * slice) + relative_address),
+           (volatile grub_uint64_t *)kernel_vaddr, length);
 
   return length;
 }
@@ -316,11 +313,9 @@ static grub_err_t nfp6000_pci_dev_init(grub_pci_device_t dev)
   g_cpp->bar_size = size;
   g_cpp->bar_base =(grub_addr_t)grub_pci_device_map_range(dev, base, size);
 
-  addr = grub_pci_make_address(dev, 0x400);
-  grub_pci_write(addr, 0x60000000);
-  //bar0.0
-  nfp_cpp_bar_slice_setup(g_cpp, 0, 0, 0x0, 0x0, 0x10000, 0x60000000);
-  //bar0.1
+  addr = grub_pci_make_address (dev, GRUB_PCI_REG_COMMAND);
+  grub_pci_write_word (addr, grub_pci_read_word (addr)
+		    | GRUB_PCI_COMMAND_MEM_ENABLED | GRUB_PCI_COMMAND_BUS_MASTER);
   nfp_cpp_bar_slice_setup(g_cpp, 0, 1, 0xe, 0x0, 0x100000, 0x27000000);
   nfp_cpp_bar_slice_setup(g_cpp, 0, 2, 0x7, 0x8100000000, 0x1000000, 0x03838100);
   nfp_os_update_symbol_bar_set(g_cpp);
@@ -334,6 +329,8 @@ static struct grub_pcinet_card nfp6000 = {
   .device = 0x4000,
   .init = nfp6000_pci_dev_init,
   .open = grub_pcinet_card_fs_open,
+  .read = grub_pcinet_card_fs_read,
+  .close = grub_pcinet_card_fs_close,
 };
 
 GRUB_MOD_INIT(nfp6000)

@@ -120,50 +120,6 @@ grub_err_t nfp_pipe_exit(struct nfp_pipe *pipe)
   return GRUB_ERR_NONE;
 }
 
-grub_err_t nfp_pipe_control_debug(struct nfp_pipe *pipe)
-{
-  /* We dont support dynamic meta size so we just dump a fixed block for the sake of debug */
-#define DEBUG_META (64u)
-
-  static struct nfp_pipe_worker worker;
-  static struct nfp_pipe_master master;
-  static grub_uint32_t meta[DEBUG_META / 4u];
-
-  if (grub_memcmp(pipe->master_control, &master, sizeof(master))) {
-    grub_dprintf("nfp", "Control Master (Operation: %u, Status: %u, Request: %u)\n",
-          PIPE_OPERATION_MASK(pipe->master_control->master_operation),
-          pipe->master_control->master_status,
-          pipe->master_control->master_transaction_req);
-    grub_dprintf("nfp", "Control Master (Meta Owner: %u, Meta Size: %u)\n",
-                         pipe->master_control->master_operation_meta_owner,
-                         pipe->master_control->master_operation_meta_size);
-    master = *pipe->master_control;
-  }
-
-  if (grub_memcmp(pipe->worker_control, &worker, sizeof(worker))) {
-    grub_dprintf("nfp", "Control Worker (Status: %u, Request: %u)\n",
-                        pipe->worker_control->worker_status,
-                        pipe->worker_control->worker_transaction_ack);
-    worker = *pipe->worker_control;
-  }
-
-  if (grub_memcmp(pipe->shared_control, &meta, sizeof(meta))) {
-    grub_uint32_t *p;
-
-    p = (grub_uint32_t *)pipe->shared_control;
-    grub_dprintf("nfp", "Meta: 0x%08x - 0x%08x - 0x%08x - 0x%08x - 0x%08x - 0x%08x\n",
-                        p[0],
-                        p[1],
-                        p[2],
-                        p[3],
-                        p[4],
-                        p[5]);
-    grub_memcpy(meta, p, DEBUG_META);
-  }
-
-  return 0;
-}
-
 grub_err_t nfp_pipe_control_read(struct nfp_pipe *pipe)
 {
   grub_uint32_t actual_read;

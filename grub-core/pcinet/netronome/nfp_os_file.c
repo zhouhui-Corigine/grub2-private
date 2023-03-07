@@ -170,7 +170,6 @@ static grub_int32_t operation_transaction_stop(struct state_machine_ctrl *s, enu
     break;
 
   case FILEOP_READ:
-    grub_printf("file read\n");
     meta = nfp_pipe_operation_meta(s->pipe);
     bytes_written = meta->transaction_size;
     if (meta->transaction_count == meta->transaction_total)
@@ -181,6 +180,9 @@ static grub_int32_t operation_transaction_stop(struct state_machine_ctrl *s, enu
       return GRUB_ERR_BUG;
     }
 
+     if(s->file->size == 0)
+      s->file->size = meta->read_size;
+
     result = nfp_pipe_buffer_read(s->pipe, bytes_written);
     if (result)
       return result;
@@ -188,33 +190,21 @@ static grub_int32_t operation_transaction_stop(struct state_machine_ctrl *s, enu
     buffer = (grub_uint8_t *)nfp_pipe_operation_buffer(s->pipe);
     buf = grub_netbuff_alloc(bytes_written);
     if (!buf) {
-      grub_dprintf("nfp", "Can not alloc net buffer for file read\n");
+      grub_error (GRUB_ERR_OUT_OF_MEMORY, "nfp read file out of memory.");
       return GRUB_ERR_OUT_OF_MEMORY;
     }
     grub_netbuff_put (buf, bytes_written);
     grub_memcpy(buf->data, buffer, bytes_written);
     grub_net_put_packet(&s->file->device->pcinet->packs, buf);
-    if (meta->transaction_count == 1)
-    {
-      int i = 0, count = 0;
-      for(count = 0; count < 4; count++)
-      {
-
-        grub_printf("%02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x\n",
-                  buffer[i], buffer[i+1], buffer[i+2], buffer[i+3], buffer[i+4],
-                  buffer[i+5], buffer[i+6], buffer[i+7], buffer[i+8], buffer[i+9],
-                  buffer[i+10], buffer[i+11], buffer[i+12], buffer[i+13],buffer[i+14],
-                  buffer[i+15]);
-        i = i + 16;
-      }
-    }
-    grub_dprintf("nfp", "\rReading (Block Set: %u/%u, Percentage: %u%%, Dynamic Poll Time: %u ms)",
+    grub_dprintf("nfp", "\rReading (Block Set: %u/%u, Percentage: %u%%, Dynamic Poll Time: %u ms)\n",
                   meta->transaction_count,
                   meta->transaction_total,
                   (meta->transaction_count * 100) / meta->transaction_total,
                   s->poll_delay_ms);
     if (meta->transaction_count != meta->transaction_total)
       *next_state = STATE_TRANSACTION_START;
+    else
+      s->file->device->pcinet->eof = 1;
     break;
 
   default:
@@ -237,13 +227,21 @@ static grub_int32_t operation_transaction_stop(struct state_machine_ctrl *s, enu
 grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_name, grub_uint64_t timeout_ms)
 {
   grub_err_t result;
-  struct nfp_pipe pipe, *p = &pipe;
+  struct nfp_pipe *p;
   grub_int32_t detect_next_operation_ready;
-  struct state_machine_ctrl state, *s = &state;
+  struct state_machine_ctrl *s;
 
-  grub_memset(&state, 0, sizeof(state));
-	grub_memset(&pipe, 0, sizeof(pipe));
-  result = nfp_pipe_init(&pipe, g_cpp, PIPE_ENDPOINT_MASTER,
+  s = grub_zalloc(sizeof(struct state_machine_ctrl));
+  if (!s)
+    return GRUB_ERR_OUT_OF_MEMORY;
+  p = grub_zalloc(sizeof(struct nfp_pipe));
+  if(!p) {
+    grub_free(s);
+    return GRUB_ERR_OUT_OF_MEMORY;
+  }
+  s->pipe = p;
+  file->data = (void*)s;
+  result = nfp_pipe_init(p, g_cpp, PIPE_ENDPOINT_MASTER,
                          file_buffer, file_control, OS_FILE_OPERATION_MAX_META_SIZE);
   if (result)
     return result;
@@ -257,7 +255,7 @@ grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_nam
                 file_buffer->size);
 
   /* Initialize the state machine */
-  s->poll_delay_ms = 200;
+  s->poll_delay_ms = PIPE_POLLING_DELAY_MS;
   s->poll_idle_count = 0;
   s->busy = 1;
   s->state = STATE_INIT;
@@ -310,7 +308,7 @@ grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_nam
         }
       }
       if (s->elapse_ms > timeout_ms) {
-        grub_dprintf("nfp", "Worker pipe endpoint is not reponding\n");
+        grub_error (GRUB_ERR_TIMEOUT, "Worker pipe endpoint is not reponding\n");
         return GRUB_ERR_TIMEOUT;
       }
     }
@@ -377,9 +375,10 @@ grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_nam
           grub_dprintf("nfp","Failed to start to operation for %d\n", s->file_op_current);
           return result;
         }
-
         /* We can go back to transaction start from here if more is needed */
         s->state = next_state;
+        if (s->state == STATE_TRANSACTION_START)
+          return GRUB_ERR_NONE;
       }
       break;
 
@@ -409,7 +408,119 @@ grub_err_t grub_pcinet_card_fs_open(struct grub_file *file, const char* file_nam
     }
     grub_millisleep(s->poll_delay_ms);
   }
+  return GRUB_ERR_NONE;
+}
 
+grub_err_t grub_pcinet_card_fs_read(struct grub_file *file)
+{
+  grub_err_t result;
+  struct state_machine_ctrl *s;
+  s = (struct state_machine_ctrl *)file->data;
+  if (!s)
+  {
+    grub_error (GRUB_ERR_BUG, "pcinet read file err.");
+    return GRUB_ERR_BUG;
+  }
+
+  do
+  {
+     /* State machine edge detect */
+    if (s->state != s->prev_state) {
+      /* We detected a state change. Take a timer snapshot */
+      s->prev_state = s->state;
+      s->elapse_ms = 0;
+      s->timeout_warning_once = 0;
+      s->timer = grub_get_time_ms();
+      /* Make sure the poll delay is not too long */
+      if (s->poll_idle_count <= PIPE_POLLING_IDLE_LOWER) {
+        if (s->poll_delay_ms)
+          s->poll_delay_ms--;
+      }
+      /* Reset the idle counter */
+      s->poll_idle_count = 0;
+      grub_dprintf("nfp", "State machine change state to: %d\n", s->state);
+    } else {
+      s->elapse_ms = grub_get_time_ms() - s->timer;
+      s->poll_idle_count++;
+      /* Make sure the poll delay is not too short */
+      if ((s->poll_idle_count > PIPE_POLLING_IDLE_UPPER)
+          && (s->state != STATE_INIT)) {
+        if (s->poll_delay_ms < PIPE_POLLING_DELAY_MS_MAX)
+          s->poll_delay_ms++;
+      }
+      if (s->elapse_ms > PIPE_STATE_TIMEOUT_SECONDS*1000) {
+        grub_error (GRUB_ERR_TIMEOUT, "pcinet read file timeout.");
+        return GRUB_ERR_TIMEOUT;
+      }
+    }
+    /* Get the latest state of the control block e.g. read worker state changes*/
+    result = nfp_pipe_control_read(s->pipe);
+    if (result)
+      return result;
+
+    switch (s->state) {
+      case STATE_TRANSACTION_START:
+        if ((nfp_pipe_worker_status_get(s->pipe) == PIPE_STATE_PROCESSING)
+            && (nfp_pipe_worker_transaction_status_get(s->pipe) == PIPE_TRANSACTION_STATUS_NONE)) {
+          result = operation_transaction_start(s);
+          if (result) {
+            grub_dprintf("nfp","Failed to start to transaction for %d\n", s->file_op_current);
+            return result;
+          }
+          s->state = STATE_TRANSACTION_END;
+        }
+        break;
+
+      case STATE_TRANSACTION_END:
+        if (nfp_pipe_worker_transaction_status_get(s->pipe) == PIPE_TRANSACTION_STATUS_END) {
+          enum state_machine_states next_state = STATE_EXIT;
+
+          /* This stage has to determine if all the transactions for the operation is complete */
+          result = operation_transaction_stop(s, &next_state);
+
+          if (result) {
+            grub_dprintf("nfp","Failed to start to operation for %d\n", s->file_op_current);
+            return result;
+          }
+          /* We can go back to transaction start from here if more is needed */
+          s->state = next_state;
+          if (s->state == STATE_TRANSACTION_START)
+            return GRUB_ERR_NONE;
+        }
+        break;
+      case STATE_OPERATION_END:
+      if (nfp_pipe_worker_transaction_status_get(s->pipe) == PIPE_TRANSACTION_STATUS_NONE) {
+        result = operation_stop(s);
+
+        if (result)
+          return result;
+
+        s->state = STATE_EXIT;
+        return GRUB_ERR_NONE;
+      }
+      break;
+      default:
+        return GRUB_ERR_BUG;
+    }
+    if (s->prev_state == s->state)
+      grub_millisleep(s->poll_delay_ms);
+  }while(1);
+
+  return GRUB_ERR_NONE;
+}
+
+grub_err_t grub_pcinet_card_fs_close(struct grub_file *file)
+{
+  struct state_machine_ctrl *s;
+
+  s = (struct state_machine_ctrl *)file->data;
+  if (!s)
+    return GRUB_ERR_NONE;
+
+  if(s->pipe)
+    grub_free(s->pipe);
+
+  grub_free(s);
   return GRUB_ERR_NONE;
 }
 
